@@ -45,7 +45,7 @@ class InputSection {
                 x: -20,
                 y: -60
             });
-        }else {
+        } else {
             TweenMax.set(this.arrow.element, {
                 rotation: -120,
                 scaleX: -0.8,
@@ -65,7 +65,7 @@ class InputSection {
                 x: 40,
                 y: 275
             });
-        }else {
+        } else {
             TweenMax.set(gif1.element, {
                 rotation: -5,
                 scale: 0.65,
@@ -85,7 +85,7 @@ class InputSection {
                 x: 40,
                 y: 275
             });
-        }else {
+        } else {
             TweenMax.set(gif2.element, {
                 rotation: -5,
                 scale: 0.65,
@@ -104,7 +104,7 @@ class InputSection {
                 x: 40,
                 y: 275
             });
-        }else {
+        } else {
             TweenMax.set(gif3.element, {
                 rotation: -5,
                 scale: 0.65,
@@ -123,7 +123,7 @@ class InputSection {
                 x: 40,
                 y: 275
             });
-        }else {
+        } else {
             TweenMax.set(gif4.element, {
                 rotation: -5,
                 scale: 0.65,
@@ -144,16 +144,22 @@ class InputSection {
         this.gifs[index].hide();
     }
 
-    ready() {
+    async ready() {
         if (!GLOBALS.browserUtils.isMobile) {
             this.createCamInput();
             this.selectCamInput();
+
+            // Check for multiple devices to show flip button on desktop
+            const devices = await GLOBALS.webcamClassifier.getDevices();
+            if (devices.length > 1) {
+                this.mediaFlipButton.classList.add('visible');
+            }
         }
     }
 
     highlight() {
         this.arrow.show();
-        TweenMax.from(this.arrow.element, 0.3, {opacity: 0});
+        TweenMax.from(this.arrow.element, 0.3, { opacity: 0 });
     }
 
     dehighlight() {
@@ -166,7 +172,7 @@ class InputSection {
 
         if (highlight) {
             this.highlight();
-        }else {
+        } else {
             this.dehighlight();
         }
     }
@@ -203,20 +209,37 @@ class InputSection {
         this.camInput.resetClass(id);
     }
 
-    flipCamera(event) {
+    async flipCamera(event) {
         event.preventDefault();
-        if (!GLOBALS.browserUtils.isAndroid) {
-            GLOBALS.isBackFacingCam = !GLOBALS.isBackFacingCam;
-            GLOBALS.webcamClassifier.loaded = false;
-            GLOBALS.webcamClassifier.ready();
-        }
-        if (GLOBALS.browserUtils.isAndroid) {
-            /*eslint-disable */
-            if (confirm('Switching camera will clear your trained classes and reload the page.')) {
-                /* eslint-enable */
+
+        if (GLOBALS.browserUtils.isMobile) {
+            if (GLOBALS.browserUtils.isAndroid) {
+                /*eslint-disable */
+                if (confirm('Switching camera will clear your trained classes and reload the page.')) {
+                    /* eslint-enable */
+                    GLOBALS.isBackFacingCam = !GLOBALS.isBackFacingCam;
+                    localStorage.setItem('isBackFacingCam', GLOBALS.isBackFacingCam.toString());
+                    location.reload();
+                }
+            } else {
                 GLOBALS.isBackFacingCam = !GLOBALS.isBackFacingCam;
-                localStorage.setItem('isBackFacingCam', GLOBALS.isBackFacingCam.toString());
-                location.reload();
+                GLOBALS.webcamClassifier.loaded = false;
+                GLOBALS.webcamClassifier.ready();
+            }
+        } else {
+            // Desktop logic: cycle through available devices
+            const devices = await GLOBALS.webcamClassifier.getDevices();
+            if (devices.length > 1) {
+                const currentDeviceId = GLOBALS.webcamClassifier.deviceId;
+                let nextIndex = 0;
+
+                if (currentDeviceId) {
+                    const currentIndex = devices.findIndex(d => d.deviceId === currentDeviceId);
+                    nextIndex = (currentIndex + 1) % devices.length;
+                }
+
+                const nextDevice = devices[nextIndex];
+                GLOBALS.webcamClassifier.startWebcam(nextDevice.deviceId);
             }
         }
     }

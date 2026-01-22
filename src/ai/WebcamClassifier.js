@@ -38,11 +38,11 @@ export default class WebcamClassifier {
     this.latestCanvas = document.createElement('canvas');
     this.latestCanvas.width = 98;
     this.latestCanvas.height = 98;
-    this.latestContext = this.latestCanvas.getContext('2d');
+    this.latestContext = this.latestCanvas.getContext('2d', { willReadFrequently: true });
     this.thumbCanvas = document.createElement('canvas');
     this.thumbCanvas.width = Math.floor(this.latestCanvas.width / 3) + 1;
     this.thumbCanvas.height = Math.floor(this.latestCanvas.height / 3) + 1;
-    this.thumbContext = this.thumbCanvas.getContext('2d');
+    this.thumbContext = this.thumbCanvas.getContext('2d', { willReadFrequently: true });
     this.thumbVideoX = 0;
     this.classNames = GLOBALS.classNames;
     this.images = {};
@@ -65,6 +65,8 @@ export default class WebcamClassifier {
     this.currentSavedClassIndex = 0;
 
     this.mappedButtonIndexes = [];
+    this.deviceId = null;
+    this.devices = [];
 
     this.init();
 
@@ -76,49 +78,88 @@ export default class WebcamClassifier {
     }
   }
 
-  startWebcam() {
+  async getDevices() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return [];
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    this.devices = devices.filter(device => device.kind === 'videoinput');
+    return this.devices;
+  }
+
+  async startWebcam(deviceId = null) {
+    if (deviceId) {
+      this.deviceId = deviceId;
+    }
+
+    // Stop existing stream if any
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+    }
+
     let video = true;
     if (GLOBALS.browserUtils.isMobile) {
-      video = {facingMode: (GLOBALS.isBackFacingCam) ? 'environment' : 'user'};
+      video = { facingMode: (GLOBALS.isBackFacingCam) ? 'environment' : 'user' };
+    } else if (this.deviceId) {
+      video = { deviceId: { exact: this.deviceId } };
+    } else {
+      // Logic to select external camera by default
+      const devices = await this.getDevices();
+      if (devices.length > 0) {
+        // Find first device that doesn't look like a built-in camera
+        const externalCamera = devices.find(device =>
+          !device.label.toLowerCase().includes('facetime') &&
+          !device.label.toLowerCase().includes('built-in')
+        );
+
+        if (externalCamera) {
+          this.deviceId = externalCamera.deviceId;
+          video = { deviceId: { exact: this.deviceId } };
+        } else {
+          // Fallback to the first available camera if no "external" one found
+          this.deviceId = devices[0].deviceId;
+          video = { deviceId: { exact: this.deviceId } };
+        }
+      }
     }
 
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia(
-      {
-        video: video,
-        audio: (GLOBALS.browserUtils.isChrome && !GLOBALS.browserUtils.isMobile)
-      }).
-      then((stream) => {
-        GLOBALS.isCamGranted = true;
-        if ((GLOBALS.browserUtils.isChrome && !GLOBALS.browserUtils.isMobile)) {
-          GLOBALS.audioContext.createMediaStreamSource(stream);
-          GLOBALS.stream = stream;
-        }
-        this.activateWebcamButton.style.display = 'none';
-        this.active = true;
-        this.stream = stream;
-        this.video.addEventListener('loadedmetadata', this.videoLoaded.bind(this));
-        this.video.muted = true;
-        this.video.srcObject = stream;
-        this.video.width = 227;
-        this.video.height = 227;
-
-        let event = new CustomEvent('webcam-status', {detail: {granted: true}});
-        window.dispatchEvent(event);
-        gtag('event', 'webcam_granted');
-        this.startTimer();
-      }).
-      catch((error) => {
-        let event = new CustomEvent('webcam-status', {
-          detail: {
-            granted: false,
-            error: error
+        {
+          video: video,
+          audio: (GLOBALS.browserUtils.isChrome && !GLOBALS.browserUtils.isMobile)
+        }).
+        then((stream) => {
+          GLOBALS.isCamGranted = true;
+          if ((GLOBALS.browserUtils.isChrome && !GLOBALS.browserUtils.isMobile)) {
+            GLOBALS.audioContext.createMediaStreamSource(stream);
+            GLOBALS.stream = stream;
           }
+          this.activateWebcamButton.style.display = 'none';
+          this.active = true;
+          this.stream = stream;
+          this.video.addEventListener('loadedmetadata', this.videoLoaded.bind(this));
+          this.video.muted = true;
+          this.video.srcObject = stream;
+          this.video.width = 227;
+          this.video.height = 227;
+
+          let event = new CustomEvent('webcam-status', { detail: { granted: true } });
+          window.dispatchEvent(event);
+          gtag('event', 'webcam_granted');
+          this.startTimer();
+        }).
+        catch((error) => {
+          let event = new CustomEvent('webcam-status', {
+            detail: {
+              granted: false,
+              error: error
+            }
+          });
+          this.activateWebcamButton.style.display = 'block';
+          window.dispatchEvent(event);
+          gtag('event', 'webcam_denied');
         });
-        this.activateWebcamButton.style.display = 'block';
-        window.dispatchEvent(event);
-        gtag('event', 'webcam_denied');
-      });
     }
   }
 
@@ -143,7 +184,7 @@ export default class WebcamClassifier {
    *  so it's clear what's happening
    */
 
-  
+
   async predict(image) {
     const imgFromPixels = tf.fromPixels(image);
     const logits = this.mobilenetModule.infer(imgFromPixels, 'conv_preds');
@@ -175,7 +216,9 @@ export default class WebcamClassifier {
 
   clear(index) {
     const newMappedIndex = this.mappedButtonIndexes.indexOf(index);
-    this.classifier.clearClass(newMappedIndex);
+    if (newMappedIndex !== -1) {
+      this.classifier.clearClass(newMappedIndex);
+    }
   }
 
   deleteClassData(index) {
@@ -269,7 +312,7 @@ export default class WebcamClassifier {
     this.video.pause();
     cancelAnimationFrame(this.timer);
     if (GLOBALS.soundOutput && GLOBALS.soundOutput.muteSounds) {
-        GLOBALS.soundOutput.muteSounds();
+      GLOBALS.soundOutput.muteSounds();
     }
   }
 
@@ -277,7 +320,7 @@ export default class WebcamClassifier {
     // Get image data from video element
     const image = this.video;
     const exampleCount = Object.keys(this.classifier.getClassExampleCount()).length;
-    
+
     if (this.isDown) {
       this.current.imagesCount += 1;
       this.currentClass.setSamples(this.current.imagesCount);
@@ -303,7 +346,7 @@ export default class WebcamClassifier {
         if (cols === 2) {
           rows += 1;
           cols = 0;
-        }else {
+        } else {
           cols += 1;
         }
       }
@@ -314,7 +357,7 @@ export default class WebcamClassifier {
         this.train(image, this.training);
       }
 
-    }else if (exampleCount > 0) {
+    } else if (exampleCount > 0) {
       // If any examples have been added, run predict
       let measureTimer = false;
       let start = performance.now();
@@ -329,11 +372,11 @@ export default class WebcamClassifier {
         if (!GLOBALS.browserUtils.isSafari || measureTimer || !GLOBALS.browserUtils.isMobile) {
           this.lastFrameTimeMs = performance.now() - start;
           computeConfidences();
-        }else {
+        } else {
           setTimeout(computeConfidences, this.lastFrameTimeMs);
         }
 
-      }else if (image.dispose) {
+      } else if (image.dispose) {
         image.dispose();
       }
     }
